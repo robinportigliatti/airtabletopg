@@ -1,15 +1,11 @@
-package airtableapi
+package airtable
 
-type Field struct {
-	ID          string                 `json:"id"`
-	Type        string                 `json:"type"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Options     map[string]interface{} `json:"options"`
-}
+import (
+	"github.com/mehanizm/airtable"
+)
 
 // IsOneToMany checks if the field represents a OneToMany relationship
-func (f *Field) IsOneToMany(field *Field) bool {
+func IsOneToMany(f *airtable.Field, field *airtable.Field) bool {
 	fPrefersSingleRecordLink := f.Options["prefersSingleRecordLink"].(bool)
 	fieldPrefersSingleRecordLink := field.Options["prefersSingleRecordLink"].(bool)
 	if !fPrefersSingleRecordLink && fieldPrefersSingleRecordLink{
@@ -19,7 +15,7 @@ func (f *Field) IsOneToMany(field *Field) bool {
 }
 
 // IsManyToOne checks if the field represents a ManyToOne relationship
-func (f *Field) IsManyToOne(field *Field) bool {
+func IsManyToOne(f *airtable.Field, field *airtable.Field) bool {
 	fPrefersSingleRecordLink := f.Options["prefersSingleRecordLink"].(bool)
 	fieldPrefersSingleRecordLink := field.Options["prefersSingleRecordLink"].(bool)
 	if fPrefersSingleRecordLink && !fieldPrefersSingleRecordLink{
@@ -29,7 +25,7 @@ func (f *Field) IsManyToOne(field *Field) bool {
 }
 
 // IsManyToMany checks if the field represents a ManyToMany relationship
-func (f *Field) IsManyToMany(field *Field) bool {
+func IsManyToMany(f *airtable.Field, field *airtable.Field) bool {
 	fPrefersSingleRecordLink := f.Options["prefersSingleRecordLink"].(bool)
 	fieldPrefersSingleRecordLink := field.Options["prefersSingleRecordLink"].(bool)
 	if !fPrefersSingleRecordLink && !fieldPrefersSingleRecordLink{

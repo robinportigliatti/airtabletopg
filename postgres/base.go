@@ -1,7 +1,7 @@
 package postgres
 
 import (
-	"airtabletopg/airtableapi"
+	"airtabletopg/airtable"
 	"fmt"
 	"strings"
 	"regexp"
@@ -12,7 +12,7 @@ type Base struct {
 	Id string
 	Name string
 	Tables []Table
-	RelationshipInfos	[]airtableapi.RelationshipInfo
+	RelationshipInfos	[]*airtable.RelationshipInfo
 }
 
 // GetCreateDatabaseStatement generates a SQL statement to create a database
@@ -36,7 +36,7 @@ func (b *Base) PreDataSQL() []string {
 	for _, table := range b.Tables {
 		columnsSQL := []string{}
 		for _, column := range table.Columns {
-			relation, ok := airtableapi.FindFieldByID(b.RelationshipInfos, column.ID)
+			relation, ok := airtable.FindFieldByIDInRelationShipInfos(b.RelationshipInfos, column.ID)
 			if ok {
 				if relation.RelationType == "ManyToOne" {
 					relatedTable, _ := FindTableByID(b.Tables, relation.RelatedTable.ID)

@@ -2,4 +2,8 @@ module airtabletopg
 
 go 1.20
 
-require github.com/mehanizm/airtable v0.2.8 // indirect
+require (
+    github.com/mehanizm/airtable v0.2.8
+)
+
+replace github.com/mehanizm/airtable => ../airtable
