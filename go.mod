@@ -6,4 +6,4 @@ require (
     github.com/mehanizm/airtable v0.2.8
 )
 
-replace github.com/mehanizm/airtable => ../airtable
+// replace github.com/mehanizm/airtable => ../airtable
