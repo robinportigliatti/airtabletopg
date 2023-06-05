@@ -9,16 +9,15 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
+//	"sort"
 	"strconv"
 	"strings"
 )
 
-func exportTableToCSV(client *airtable.Client, b *airtable.Base, r []*a.RelationshipInfo, tableName string) error {
+func exportTableToCSV(client *airtable.Client, b *airtable.Base, s *airtable.Tables, r []*a.RelationshipInfo, tableName string) error {
 //	fmt.Printf("Processing table: %s\n", tableName)
 	// Get schema and current table
-	schema, err := client.GetBaseSchema(b.ID).Do()
-	currentTable, _ := a.FindTableByName(schema.Tables, tableName)
+	currentTable, _ := a.FindTableByName(s.Tables, tableName)
 	table := client.GetTable(b.ID, tableName)
 	records,_ := table.GetRecords().Do()
 
@@ -37,7 +36,7 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, r []*a.Relation
 	defer writer.Flush()
 
 	for _, record := range records.Records {
-		row, err := processRecord(record, currentTable, r, client, b)
+		row, err := processRecord(record, currentTable, s, r, client, b)
 		if err != nil {
 			return err
 		}
@@ -50,15 +49,11 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, r []*a.Relation
 
 	writer.Flush()
 
-	// fmt.Println(len(records.Records))
 	if len(records.Records) != 0 {
 		var keys []string
-		record := records.Records[0]
-		for k := range record.Fields {
+		for _, f := range currentTable.Fields {
 			var appendBool = true
-			// Si dans relation et qu'il est en ManyToOne on fait rien
-			currentField, _ := a.FindFieldByName(currentTable.Fields, k)
-			currentRelationIfFound, _ := a.FindRelationByTableIDAndFieldID(r, currentTable.ID, currentField.ID)
+			currentRelationIfFound, _ := a.FindRelationByTableIDAndFieldID(r, currentTable.ID, f.ID)
 			if currentRelationIfFound != nil {
 				if currentRelationIfFound.RelationType == "OneToMany" || currentRelationIfFound.RelationType == "ManyToMany" {
 					appendBool = false
@@ -67,22 +62,20 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, r []*a.Relation
 				}
 			}
 			if appendBool {
-				keys = append(keys, k)
+				keys = append(keys, f.Name)
 			}
 		}
-		sort.Strings(keys)
+		
 		var sql []string
 		sql = append(sql, fmt.Sprintf("\\COPY %s (" + strings.Join(postgres.NameFormatJoin(keys), ", ") + ") FROM '%s' DELIMITER '%s' CSV;", postgres.NameFormat(tableName), fileName, string(writer.Comma) ))
 		writeCOPYSQL(sql, "data.sql")
-
+		err = removeLastLine(fileName)
 	}
-
-	
-
 	return nil
 }
 
 func removeLastLine(fileName string) error {
+	fmt.Println(fileName)
 	// Ouvrez le fichier en mode lecture et écriture.
 	file, err := os.OpenFile(fileName, os.O_RDWR, 0)
 	if err != nil {
@@ -97,7 +90,7 @@ func removeLastLine(fileName string) error {
 	}
 
 	// Supprimez le dernier caractère (saut de ligne).
-	err = file.Truncate(stat.Size() - 1)
+	err = file.Truncate(stat.Size() - 2)
 	if err != nil {
 		return err
 	}
@@ -112,34 +105,28 @@ func removeLastLine(fileName string) error {
 }
 
 
-func processRecord(record *airtable.Record, currentTable *airtable.TableSchema, r []*a.RelationshipInfo, client *airtable.Client, b *airtable.Base) ([]string, error) {
+func processRecord(record *airtable.Record, currentTable *airtable.TableSchema, s *airtable.Tables, r []*a.RelationshipInfo, client *airtable.Client, b *airtable.Base) ([]string, error) {
 	var row []string
-	var keys []string
-	for k := range record.Fields {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	
-	for _, fieldName := range keys {
-		fieldValue := record.Fields[fieldName]
+	for _, f := range currentTable.Fields {
 		var appendBool = true
-		var valueToStore = fieldValue
+		var valueToStore = record.Fields[f.Name]
+		if valueToStore == nil {
+			valueToStore = ""
+		}
+		
 		var err = errors.New("")
-		// Si le duo fieldName
-		// Dans notre objet Base on a notre table courante et le field courant
-		currentField, _ := a.FindFieldByName(currentTable.Fields, fieldName)
-		if currentField.Type == "multipleRecordLinks" {
-			appendBool, valueToStore, err = processField(client, b, r, currentTable, currentField, fieldValue)
+		if f.Type == "multipleRecordLinks" {
+			appendBool, valueToStore, err = processField(client, b, r, currentTable, f, valueToStore)
 			if err != nil {
 				return nil, err
 			}
 		}
-		// fmt.Println(currentField)
+		
 		if appendBool {
 			row = append(row, fmt.Sprintf("%v", valueToStore))
 		}
 	}
-
 	return row, nil
 
 }
@@ -147,7 +134,6 @@ func processRecord(record *airtable.Record, currentTable *airtable.TableSchema, 
 func processField(client *airtable.Client, b *airtable.Base, r []*a.RelationshipInfo, currentTable *airtable.TableSchema, currentField *airtable.Field, fieldValue interface{}) (bool, interface{}, error) {
 	appendBool := true
 	valueToStore := fieldValue
-
 	currentRelationIfFound, _ := a.FindRelationByTableIDAndFieldID(r, currentTable.ID, currentField.ID)
 	if currentRelationIfFound != nil {
 		if currentRelationIfFound.RelationType == "OneToMany" || currentRelationIfFound.RelationType == "ManyToMany" {
@@ -307,10 +293,10 @@ func HandlingManyToManyRelationShipsToCSV(client *airtable.Client, b *airtable.B
 								return err
 							}
 						}
-						}
 					}
-					// id, ok := fieldValueSlice[0].(string)
 				}
+				_ = removeLastLine(fileName)
+			}				
 
 		}
 	}
@@ -380,7 +366,7 @@ func main() {
 			if *data {
 				deleteFile("data.sql")
 				for _, table := range postgresBase.Tables {
-					err := exportTableToCSV(client, base, postgresBase.RelationshipInfos, table.Name)
+					err := exportTableToCSV(client, base, schema, postgresBase.RelationshipInfos, table.Name)
 					if err != nil {
 						fmt.Printf("Error processing table %s: %v\n", table, err)
 					}
