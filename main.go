@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,9 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, r []*a.Relation
 	defer file.Close()
 
 	writer := csv.NewWriter(file)
+	writer.Comma = ';' // définir le délimiteur si besoin, par défaut c'est une virgule
+	writer.UseCRLF = true
+
 	defer writer.Flush()
 
 	for _, record := range records.Records {
@@ -43,21 +47,70 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, r []*a.Relation
 			return err
 		}
 	}
-	fmt.Println(len(records.Records))
-	if len(records.Records) != 0 {
 
+	writer.Flush()
+
+	// fmt.Println(len(records.Records))
+	if len(records.Records) != 0 {
 		var keys []string
 		record := records.Records[0]
 		for k := range record.Fields {
-			keys = append(keys, k)
+			var appendBool = true
+			// Si dans relation et qu'il est en ManyToOne on fait rien
+			currentField, _ := a.FindFieldByName(currentTable.Fields, k)
+			currentRelationIfFound, _ := a.FindRelationByTableIDAndFieldID(r, currentTable.ID, currentField.ID)
+			if currentRelationIfFound != nil {
+				if currentRelationIfFound.RelationType == "OneToMany" || currentRelationIfFound.RelationType == "ManyToMany" {
+					appendBool = false
+				} else if currentRelationIfFound.RelationType == "ManyToOne" {
+					appendBool = true
+				}
+			}
+			if appendBool {
+				keys = append(keys, k)
+			}
 		}
 		sort.Strings(keys)
 		var sql []string
-		sql = append(sql, fmt.Sprintf("\\COPY %s (" + strings.Join(keys, ", ") + ") FROM '%s' DELIMITER ',' CSV;", tableName, fileName ))
+		sql = append(sql, fmt.Sprintf("\\COPY %s (" + strings.Join(postgres.NameFormatJoin(keys), ", ") + ") FROM '%s' DELIMITER '%s' CSV;", postgres.NameFormat(tableName), fileName, string(writer.Comma) ))
 		writeCOPYSQL(sql, "data.sql")
+
 	}
+
+	
+
 	return nil
 }
+
+func removeLastLine(fileName string) error {
+	// Ouvrez le fichier en mode lecture et écriture.
+	file, err := os.OpenFile(fileName, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Obtenez la taille actuelle du fichier.
+	stat, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	// Supprimez le dernier caractère (saut de ligne).
+	err = file.Truncate(stat.Size() - 1)
+	if err != nil {
+		return err
+	}
+
+	// Assurez-vous que toutes les modifications sont écrites sur le disque.
+	err = file.Sync()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 
 func processRecord(record *airtable.Record, currentTable *airtable.TableSchema, r []*a.RelationshipInfo, client *airtable.Client, b *airtable.Base) ([]string, error) {
 	var row []string
@@ -172,6 +225,99 @@ func deleteFile(filename string) {
 	}
 }
 
+func HandlingManyToManyRelationShipsToCSV(client *airtable.Client, b *airtable.Base, r []*a.RelationshipInfo) error {
+	//	fmt.Printf("Processing table: %s\n", tableName)
+		// Get schema and current table
+	// schema, err := client.GetBaseSchema(b.ID).Do()
+	alreadyProcessed := []string{}
+	for _, relation := range r {
+		if relation.RelationType == "OneToMany" || relation.RelationType == "ManyToOne" {
+			continue
+		} else if relation.RelationType == "ManyToMany" {
+			if !postgres.Contains(alreadyProcessed, postgres.NameFormat(relation.Table.Name)) && !postgres.Contains(alreadyProcessed, postgres.NameFormat(relation.RelatedTable.Name)) {
+				// On récupère tous les records de relation.Table
+				var table = client.GetTable(b.ID, relation.Table.Name)
+				var relatedTable = client.GetTable(b.ID, relation.RelatedTable.Name)
+				tablePrimaryField, _ := a.FindFieldByID(&relation.Table, relation.Table.PrimaryFieldID)
+				relatedPrimaryField, _ := a.FindFieldByID(&relation.RelatedTable, relation.RelatedTable.PrimaryFieldID)
+
+				// On dit que les deux tables ont été faites
+				alreadyProcessed = append(alreadyProcessed, postgres.NameFormat(relation.Table.Name))
+				alreadyProcessed = append(alreadyProcessed, postgres.NameFormat(relation.RelatedTable.Name))
+				// On crée le fichier
+				fileName := fmt.Sprintf("%s_%s.csv", relation.Table.Name, relation.RelatedTable.Name)
+
+				var sql []string
+				file, err := os.Create(fileName)
+				if err != nil {
+					return err
+				}
+				defer file.Close()
+
+				writer := csv.NewWriter(file)
+				writer.Comma = ';' // définir le délimiteur si besoin, par défaut c'est une virgule
+				writer.UseCRLF = true
+			
+				defer writer.Flush()
+				sql = append(
+					sql, fmt.Sprintf(
+						"\\COPY %s (%s, %s) FROM '%s' DELIMITER '%s' CSV;",
+						postgres.NameFormat(relation.Table.Name + "_" + relation.RelatedTable.Name),
+						postgres.NameFormat(tablePrimaryField.Name + "_" + relation.Table.Name),
+						postgres.NameFormat(relatedPrimaryField.Name + "_" + relation.RelatedTable.Name),
+						string(writer.Comma),
+						fileName))
+				writeCOPYSQL(sql, "data.sql")
+
+				// On récupère les records de relation.Table
+				var records,_ = table.GetRecords().Do()
+				// fmt.Println(fmt.Sprintf("%s,%s", relation.Field.Name, relation.RelatedField.Name))
+				for _, record := range records.Records {
+					// On récupère la valeur du champs
+					var fieldValue = record.Fields[relation.Field.Name]
+					// Vu qu'on est dans une relation ManyToMany je vais avoir [id1, id2, id3]
+					// Faut donc faire un slice
+					fieldValueSlice, _ := fieldValue.([]interface{})
+					if len(fieldValueSlice) != 0 {
+						// On récupère un par un les records de la table relation.RelatedTable.Name correspond à
+						// une recherche avec fieldValueSlice
+						
+						for _, id := range fieldValueSlice {
+							var row []string
+							var valueToStore string
+							currentRecord, _ := relatedTable.GetRecord(id.(string))
+							switch v := record.Fields[tablePrimaryField.Name].(type) {
+							case float64:
+								valueToStore = strconv.FormatFloat(v, 'f', -1, 64)
+							default:
+								valueToStore = v.(string)
+							}
+							row = append(row, fmt.Sprintf("%v", valueToStore))
+
+							switch v := currentRecord.Fields[relatedPrimaryField.Name].(type) {
+							case float64:
+								valueToStore = strconv.FormatFloat(v, 'f', -1, 64)
+							default:
+								valueToStore = v.(string)
+							}
+							row = append(row, fmt.Sprintf("%v", valueToStore))
+							//fmt.Println(row)
+							err = writer.Write(row)
+							if err != nil {
+								return err
+							}
+						}
+						}
+					}
+					// id, ok := fieldValueSlice[0].(string)
+				}
+
+		}
+	}
+
+	return nil
+}	
+
 func main() {
 	apiKey := flag.String("api-key", "", "API key for Airtable")
 	dbName := flag.String("dbname", "", "Database name")
@@ -239,6 +385,8 @@ func main() {
 						fmt.Printf("Error processing table %s: %v\n", table, err)
 					}
 				}
+				// Handling ManyToMany RelationShips
+				HandlingManyToManyRelationShipsToCSV(client, base, postgresBase.RelationshipInfos)
 			}
 			if *postData {
 				writeSQL(postgresBase.PostDataSQL(), "post-data.sql")
