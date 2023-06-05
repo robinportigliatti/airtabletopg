@@ -1,49 +1,40 @@
-package airtableapi
+package airtable
 
-type Table struct {
-	ID             string  `json:"id"`
-	PrimaryFieldId string  `json:"primaryFieldId"`
-	Name           string  `json:"name"`
-	Description    string  `json:"description"`
-	Fields         []Field `json:"fields"`
-	Views          []View  `json:"views"`
-}
+import (
+	"github.com/mehanizm/airtable"
+)
 
-type BaseSchemaResponse struct {
-	Tables []Table `json:"tables"`
-}
-
-func FindTableByID(tables []Table, id string) (*Table, bool) {
+func FindTableByID(tables []*airtable.TableSchema, id string) (*airtable.TableSchema, bool) {
 	for _, table := range tables {
 		if table.ID == id {
-			return &table, true
+			return table, true
 		}
 	}
 	return nil, false
 }
 
-func (t *Table) FindFieldByID(id string) (*Field, bool) {
+func FindFieldByID(t *airtable.TableSchema, id string) (*airtable.Field, bool) {
 	for _, field := range t.Fields {
 		if field.ID == id {
-			return &field, true
+			return field, true
 		}
 	}
 	return nil, false
 }
 
-func FindFieldByIDInAllTables(tables []Table, id string) (*Field, bool) {
+func FindFieldByIDInAllTables(tables []*airtable.TableSchema, id string) (*airtable.Field, bool) {
 	for _, table := range tables {
 		for _, field := range table.Fields {
 			if field.ID == id {
-				return &field, true
+				return field, true
 			}
 		}
 	}
 	return nil, false
 }
 
-func AnalyzeRelationships(t []Table) []RelationshipInfo {
-	var relations []RelationshipInfo
+func AnalyzeRelationships(t []*airtable.TableSchema) []*RelationshipInfo {
+	var relations []*RelationshipInfo
 	for _, table := range t { 
 		for _, field := range table.Fields {
 			// If the field is not a multipleRecordLink, skip it
@@ -54,19 +45,19 @@ func AnalyzeRelationships(t []Table) []RelationshipInfo {
 			relatedTable, _ := FindTableByID(t, field.Options["linkedTableId"].(string)) 
 			relatedField, _ := FindFieldByIDInAllTables(t, field.Options["inverseLinkFieldId"].(string))
 			relation := RelationshipInfo{
-				Table: table,
-				Field: field,
+				Table: *table,
+				Field: *field,
 				RelatedTable: *relatedTable,
 				RelatedField: *relatedField,
 			}
 
 
 			// Determine the type of relation
-			if field.IsOneToMany(relatedField) {
+			if IsOneToMany(field, relatedField) {
 				relation.RelationType = "OneToMany"
-			} else if field.IsManyToOne(relatedField) {
+			} else if IsManyToOne(field, relatedField) {
 				relation.RelationType = "ManyToOne"
-			} else if field.IsManyToMany(relatedField) {
+			} else if IsManyToMany(field, relatedField) {
 				relation.RelationType = "ManyToMany"
 			} else {
 				// If none of the conditions match, it's an unsupported type of relation
@@ -76,7 +67,7 @@ func AnalyzeRelationships(t []Table) []RelationshipInfo {
 			// fmt.Println(fmt.Sprintf("%s.%s is related to %s.%s by a %s relationship", table.Name, field.Name, relatedTable.Name, relatedField.Name, relation.RelationType))
 
 			// Add the relation to the list
-			relations = append(relations, relation)
+			relations = append(relations, &relation)
 		}
 	}
 
