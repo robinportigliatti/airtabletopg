@@ -27,13 +27,10 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, s *airtable.Tab
 		if err != nil {
 			return err
 		}
-		defer file.Close()
 
 		writer := csv.NewWriter(file)
 		writer.Comma = ';' // définir le délimiteur si besoin, par défaut c'est une virgule
 		writer.UseCRLF = true
-
-		defer writer.Flush()
 
 		for {
 
@@ -48,6 +45,8 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, s *airtable.Tab
 					return err
 				}
 			}
+
+			writer.Flush()
 			var offSet = records.Offset
 			if offSet != "" {
 				records,_ = table.GetRecords().WithOffset(offSet).Do()
@@ -57,6 +56,8 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, s *airtable.Tab
 		}
 
 		writer.Flush()
+
+		file.Close()
 
 		var keys []string
 		for _, f := range currentTable.Fields {
@@ -246,13 +247,11 @@ func HandlingManyToManyRelationShipsToCSV(client *airtable.Client, b *airtable.B
 				if err != nil {
 					return err
 				}
-				defer file.Close()
 
 				writer := csv.NewWriter(file)
 				writer.Comma = ';' // définir le délimiteur si besoin, par défaut c'est une virgule
 				writer.UseCRLF = true
-			
-				defer writer.Flush()
+
 				sql = append(
 					sql, fmt.Sprintf(
 						"\\COPY %s (%s, %s) FROM '%s' DELIMITER '%s' CSV;",
@@ -302,9 +301,13 @@ func HandlingManyToManyRelationShipsToCSV(client *airtable.Client, b *airtable.B
 							}
 						}
 					}
+
+					writer.Flush()
 				}
+
+				file.Close()
 				_ = removeLastLine(fileName)
-			}				
+			}
 
 		}
 	}
