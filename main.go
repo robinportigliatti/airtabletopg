@@ -21,35 +21,43 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, s *airtable.Tab
 	table := client.GetTable(b.ID, tableName)
 	records,_ := table.GetRecords().Do()
 
-
-	fileName := fmt.Sprintf("%s.csv", tableName)
-	file, err := os.Create(fileName)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	writer.Comma = ';' // définir le délimiteur si besoin, par défaut c'est une virgule
-	writer.UseCRLF = true
-
-	defer writer.Flush()
-
-	for _, record := range records.Records {
-		row, err := processRecord(record, currentTable, s, r, client, b)
+	if len(records.Records) > 0 {
+		fileName := fmt.Sprintf("%s.csv", tableName)
+		file, err := os.Create(fileName)
 		if err != nil {
 			return err
 		}
+		defer file.Close()
 
-		err = writer.Write(row)
-		if err != nil {
-			return err
+		writer := csv.NewWriter(file)
+		writer.Comma = ';' // définir le délimiteur si besoin, par défaut c'est une virgule
+		writer.UseCRLF = true
+
+		defer writer.Flush()
+
+		for {
+
+			for _, record := range records.Records {
+				row, err := processRecord(record, currentTable, s, r, client, b)
+				if err != nil {
+					return err
+				}
+
+				err = writer.Write(row)
+				if err != nil {
+					return err
+				}
+			}
+			var offSet = records.Offset
+			if offSet != "" {
+				records,_ = table.GetRecords().WithOffset(offSet).Do()
+			} else {
+				break
+			}
 		}
-	}
 
-	writer.Flush()
+		writer.Flush()
 
-	if len(records.Records) != 0 {
 		var keys []string
 		for _, f := range currentTable.Fields {
 			var appendBool = true
@@ -75,7 +83,7 @@ func exportTableToCSV(client *airtable.Client, b *airtable.Base, s *airtable.Tab
 }
 
 func removeLastLine(fileName string) error {
-	fmt.Println(fileName)
+	//fmt.Println(fileName)
 	// Ouvrez le fichier en mode lecture et écriture.
 	file, err := os.OpenFile(fileName, os.O_RDWR, 0)
 	if err != nil {
